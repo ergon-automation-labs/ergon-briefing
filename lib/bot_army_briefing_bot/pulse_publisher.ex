@@ -36,7 +36,7 @@ defmodule BotArmyBriefingBot.PulsePublisher do
     started_at = DateTime.utc_now() |> DateTime.truncate(:second)
     send(self(), :publish_health)
     send(self(), :publish_pulse)
-    {:ok, %{started_at: started_at}}
+    {:ok, %{started_at: started_at, metrics: %{}, error_count: 0}}
   end
 
   @impl true
@@ -46,33 +46,52 @@ defmodule BotArmyBriefingBot.PulsePublisher do
     {:noreply, state}
   end
 
-  @impl true
-  def handle_info(:publish_pulse, state) do
-    Task.start(fn -> publish_pulse() end)
-    Process.send_after(self(), :publish_pulse, @publish_interval_ms)
-    {:noreply, state}
+  def record_metric(key, value) do
+    GenServer.cast(__MODULE__, {:record_metric, key, value})
+  end
+
+  def record_error do
+    GenServer.cast(__MODULE__, :record_error)
   end
 
   @impl true
-  def handle_cast({:record_metric, _key, _value}, state) do
-    # TODO: Track metric in state for next pulse publish
-    {:noreply, state}
+  def handle_info(:publish_pulse, state) do
+    Task.start(fn -> publish_pulse(state) end)
+    Process.send_after(self(), :publish_pulse, @publish_interval_ms)
+    {:noreply, %{state | metrics: %{}, error_count: 0}}
+  end
+
+  @impl true
+  def handle_cast({:record_metric, key, value}, state) do
+    metrics =
+      Map.update(state.metrics, key, value, fn current ->
+        if is_number(current) and is_number(value) do
+          current + value
+        else
+          value
+        end
+      end)
+
+    {:noreply, %{state | metrics: metrics}}
+  end
+
+  @impl true
+  def handle_cast(:record_error, state) do
+    {:noreply, %{state | error_count: state.error_count + 1}}
   end
 
   # ============================================================================
   # Private Implementation
   # ============================================================================
 
-  defp publish_pulse do
-    signal = health_signal()
+  defp publish_pulse(state) do
+    signal = health_signal(state)
 
     pulse = %{
       service: @service_name,
       timestamp: DateTime.utc_now() |> DateTime.to_iso8601(),
       health: signal,
-      # TODO: Add domain-specific metrics here
-      # Examples: active_sessions, items_processed, errors_in_window
-      metrics: %{}
+      metrics: state.metrics
     }
 
     case BotArmyRuntime.NATS.Publisher.publish("bot.#{@service_name}.pulse", pulse) do
@@ -84,10 +103,12 @@ defmodule BotArmyBriefingBot.PulsePublisher do
     end
   end
 
-  defp publish_system_health(%{started_at: started_at}) do
+  defp publish_system_health(%{started_at: started_at} = state) do
     tenant_id = System.get_env("BOT_ARMY_TENANT_ID") || BotArmyRuntime.Tenant.default_tenant_id()
-    signal = health_signal()
-    uptime_seconds = DateTime.diff(DateTime.utc_now() |> DateTime.truncate(:second), started_at, :second)
+    signal = health_signal(state)
+
+    uptime_seconds =
+      DateTime.diff(DateTime.utc_now() |> DateTime.truncate(:second), started_at, :second)
 
     case BotArmyRuntime.SynapseHealth.publish(
            source: @envelope_source,
@@ -104,12 +125,13 @@ defmodule BotArmyBriefingBot.PulsePublisher do
     end
   end
 
-  defp health_signal do
-    # TODO: Implement health signal logic based on domain metrics
-    # Examples:
-    #   - Return :critical if error_count > threshold
-    #   - Return :degraded if activity_count == 0
-    #   - Return :nominal otherwise
-    :nominal
+  defp health_signal(state) do
+    error_threshold = 5
+
+    cond do
+      state.error_count > error_threshold -> :critical
+      map_size(state.metrics) == 0 -> :degraded
+      true -> :nominal
+    end
   end
 end
