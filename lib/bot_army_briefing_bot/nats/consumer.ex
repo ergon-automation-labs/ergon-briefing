@@ -50,20 +50,7 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
         Logger.info("Connected to NATS, subscribing to topics")
 
         subscriptions =
-          [
-            # Add your subjects here
-          ]
-          |> Enum.map(fn subject ->
-            case Gnat.sub(conn, self(), subject) do
-              {:ok, sub} ->
-                Logger.info("Subscribed to #{subject}")
-                sub
-
-              {:error, reason} ->
-                Logger.error("Failed to subscribe to #{subject}: #{inspect(reason)}")
-                nil
-            end
-          end)
+          subscribe_to_subjects([])
           |> Enum.filter(&(not is_nil(&1)))
 
         # Register subjects for runtime discovery
@@ -87,29 +74,30 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
   def handle_info({:msg, msg}, state) do
     BotArmyRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers), fn ->
       Logger.debug("Received NATS message on subject: #{msg.topic}")
-
-      # Handle request/reply patterns
-      if msg.reply_to do
-        case msg.topic do
-          "briefing.generate.now" ->
-            handle_generate_briefing(msg, state)
-
-          _ ->
-            Logger.debug("Unknown request/reply subject: #{msg.topic}")
-        end
-      else
-        # Handle pub/sub messages
-        case BotArmyCore.NATS.Decoder.decode(msg.body) do
-          {:ok, decoded_message} ->
-            route_message(decoded_message, msg.topic)
-
-          {:error, reason} ->
-            Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
-        end
-      end
+      route_message_by_type(msg, state)
     end)
 
     {:noreply, state}
+  end
+
+  defp route_message_by_type(%{reply_to: reply_to} = msg, state) when not is_nil(reply_to) do
+    case msg.topic do
+      "briefing.generate.now" ->
+        handle_generate_briefing(msg, state)
+
+      _ ->
+        Logger.debug("Unknown request/reply subject: #{msg.topic}")
+    end
+  end
+
+  defp route_message_by_type(msg, _state) do
+    case BotArmyCore.NATS.Decoder.decode(msg.body) do
+      {:ok, decoded_message} ->
+        route_message(decoded_message, msg.topic)
+
+      {:error, reason} ->
+        Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
+    end
   end
 
   @impl true
@@ -149,6 +137,24 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
 
     if state.conn do
       Gnat.pub(state.conn, msg.reply_to, response)
+    end
+  end
+
+  defp subscribe_to_subjects(subjects) do
+    Enum.map(subjects, &subscribe_one/1)
+  end
+
+  defp subscribe_one(subject) do
+    conn = elem(GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000), 1)
+
+    case Gnat.sub(conn, self(), subject) do
+      {:ok, sub} ->
+        Logger.info("Subscribed to #{subject}")
+        sub
+
+      {:error, reason} ->
+        Logger.error("Failed to subscribe to #{subject}: #{inspect(reason)}")
+        nil
     end
   end
 end
