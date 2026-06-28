@@ -1,4 +1,7 @@
 defmodule BotArmyBriefingBot.BriefingOrchestrator do
+  @moduledoc """
+  Orchestrates daily briefing generation and publication.
+  """
   use GenServer
   require Logger
 

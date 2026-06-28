@@ -1,4 +1,7 @@
 defmodule BotArmyBriefingBot.BriefingBuilder do
+  @moduledoc """
+  Builds markdown briefing content from GTD tasks, fitness plans, and health snapshots.
+  """
   @morning_videos [
     %{
       title: "Can't Hurt Me — David Goggins",

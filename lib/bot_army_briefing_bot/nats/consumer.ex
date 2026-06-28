@@ -92,8 +92,8 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
 
   defp route_message_by_type(msg, _state) do
     case BotArmyCore.NATS.Decoder.decode(msg.body) do
-      {:ok, decoded_message} ->
-        route_message(decoded_message, msg.topic)
+      {:ok, _decoded_message} ->
+        Logger.debug("Decoded message from #{msg.topic}")
 
       {:error, reason} ->
         Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
@@ -116,12 +116,6 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
   @impl true
   def handle_info(:reconnect, state) do
     {:noreply, state, {:continue, :connect}}
-  end
-
-  # Message routing
-  defp route_message(message, topic) do
-    # Route decoded messages to appropriate handlers
-    Logger.debug("Routing message from #{topic}")
   end
 
   # Request/reply handlers
