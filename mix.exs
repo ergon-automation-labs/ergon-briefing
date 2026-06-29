@@ -8,6 +8,9 @@ defmodule BotArmyBriefingBot.MixProject do
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      dialyzer: [
+        flags: [:underspecs]
+      ],
       releases: [
         briefing_bot: [
           applications: [bot_army_briefing_bot: :permanent]
