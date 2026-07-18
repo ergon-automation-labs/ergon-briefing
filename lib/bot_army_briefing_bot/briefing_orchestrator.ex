@@ -81,7 +81,7 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
   end
 
   defp fetch_gtd_tasks do
-    case BotArmyRuntime.NATS.Publisher.request("gtd.whats_next", %{}, timeout_ms: @gtd_timeout_ms) do
+    case BotArmyLibraryRuntime.NATS.Publisher.request("gtd.whats_next", %{}, timeout_ms: @gtd_timeout_ms) do
       {:ok, %{"data" => %{"human" => %{"tasks" => tasks}}}} ->
         tasks
 
@@ -91,7 +91,7 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
   end
 
   defp fetch_fitness_plan do
-    case BotArmyRuntime.NATS.Publisher.request("fitness.workout.today", %{},
+    case BotArmyLibraryRuntime.NATS.Publisher.request("fitness.workout.today", %{},
            timeout_ms: @fitness_timeout_ms
          ) do
       {:ok, %{"data" => plan}} ->
@@ -103,10 +103,10 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
   end
 
   defp fetch_health_snapshot do
-    tenant_id = BotArmyCore.Tenant.default_tenant_id()
+    tenant_id = BotArmyLibraryCore.Tenant.default_tenant_id()
     user_id = "00000000-0000-0000-0000-000000000002"
 
-    case BotArmyRuntime.NATS.Publisher.request(
+    case BotArmyLibraryRuntime.NATS.Publisher.request(
            "dispatcher.system.health.digest.query",
            %{"tenant_id" => tenant_id, "user_id" => user_id},
            timeout_ms: @health_timeout_ms
@@ -120,7 +120,7 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
   end
 
   defp fetch_weather do
-    case BotArmyRuntime.NATS.Publisher.request("weather.current.get", %{},
+    case BotArmyLibraryRuntime.NATS.Publisher.request("weather.current.get", %{},
            timeout_ms: @weather_timeout_ms
          ) do
       {:ok, %{"data" => weather}} ->
@@ -141,7 +141,7 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
       "mode" => "write"
     }
 
-    case BotArmyRuntime.NATS.Publisher.publish("para.fs.write", payload) do
+    case BotArmyLibraryRuntime.NATS.Publisher.publish("para.fs.write", payload) do
       {:ok, _} ->
         Logger.info("[BriefingOrchestrator] Briefing written to PARA")
 
@@ -162,7 +162,7 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
       }
     }
 
-    case BotArmyRuntime.NATS.Publisher.publish("bridge.discord.message.send", payload) do
+    case BotArmyLibraryRuntime.NATS.Publisher.publish("bridge.discord.message.send", payload) do
       {:ok, _} ->
         Logger.info("[BriefingOrchestrator] Discord notification sent")
 

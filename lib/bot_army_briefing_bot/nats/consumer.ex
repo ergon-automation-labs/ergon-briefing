@@ -6,8 +6,8 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
   Uses standardized Reply format for request/reply patterns.
 
   All request/reply handlers should return responses using Reply helpers:
-  - BotArmyRuntime.NATS.Reply.ok(data) for success
-  - BotArmyRuntime.NATS.Reply.error(message, code) for errors
+  - BotArmyLibraryRuntime.NATS.Reply.ok(data) for success
+  - BotArmyLibraryRuntime.NATS.Reply.error(message, code) for errors
   """
 
   use GenServer
@@ -44,9 +44,9 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
 
   @impl true
   def handle_continue(:connect, state) do
-    case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
+    case GenServer.call(BotArmyLibraryRuntime.NATS.Connection, :get_connection, 5000) do
       {:ok, conn} ->
-        BotArmyRuntime.NATS.Connection.subscribe_to_status()
+        BotArmyLibraryRuntime.NATS.Connection.subscribe_to_status()
         Logger.info("Connected to NATS, subscribing to topics")
 
         subscriptions =
@@ -54,7 +54,7 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
           |> Enum.filter(&(not is_nil(&1)))
 
         # Register subjects for runtime discovery
-        BotArmyRuntime.Registry.register("briefing_bot", @subjects, @version)
+        BotArmyLibraryRuntime.Registry.register("briefing_bot", @subjects, @version)
 
         {:noreply, %{state | subscriptions: subscriptions, conn: conn}}
 
@@ -72,7 +72,7 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
 
   @impl true
   def handle_info({:msg, msg}, state) do
-    BotArmyRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers), fn ->
+    BotArmyLibraryRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers), fn ->
       Logger.debug("Received NATS message on subject: #{msg.topic}")
       route_message_by_type(msg, state)
     end)
@@ -91,7 +91,7 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
   end
 
   defp route_message_by_type(msg, _state) do
-    case BotArmyCore.NATS.Decoder.decode(msg.body) do
+    case BotArmyLibraryCore.NATS.Decoder.decode(msg.body) do
       {:ok, _decoded_message} ->
         Logger.debug("Decoded message from #{msg.topic}")
 
@@ -123,10 +123,10 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
     response =
       case BotArmyBriefingBot.BriefingOrchestrator.generate_now() do
         :ok ->
-          BotArmyRuntime.NATS.Reply.ok(%{"status" => "briefing_generated"})
+          BotArmyLibraryRuntime.NATS.Reply.ok(%{"status" => "briefing_generated"})
 
         {:error, reason} ->
-          BotArmyRuntime.NATS.Reply.error(inspect(reason), :generation_failed)
+          BotArmyLibraryRuntime.NATS.Reply.error(inspect(reason), :generation_failed)
       end
 
     if state.conn do
@@ -139,7 +139,7 @@ defmodule BotArmyBriefingBot.NATS.Consumer do
   end
 
   defp subscribe_one(subject) do
-    conn = elem(GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000), 1)
+    conn = elem(GenServer.call(BotArmyLibraryRuntime.NATS.Connection, :get_connection, 5000), 1)
 
     case Gnat.sub(conn, self(), subject) do
       {:ok, sub} ->
