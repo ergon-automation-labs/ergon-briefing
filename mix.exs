@@ -5,7 +5,7 @@ defmodule BotArmyBriefingBot.MixProject do
     [
       app: :bot_army_briefing_bot,
 <<<<<<< HEAD
-      version: "0.1.6",
+      version: "0.1.7",
 =======
       version: "0.1.8",
 >>>>>>> 61f6527 (chore: Bump version to 0.1.8 to pick up runtime v0.14.62)
