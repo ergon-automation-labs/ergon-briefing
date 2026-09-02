@@ -4,11 +4,7 @@ defmodule BotArmyBriefingBot.MixProject do
   def project do
     [
       app: :bot_army_briefing_bot,
-<<<<<<< HEAD
-      version: "0.1.7",
-=======
-      version: "0.1.9",
->>>>>>> 61f6527 (chore: Bump version to 0.1.8 to pick up runtime v0.14.62)
+      version: "0.1.8",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),

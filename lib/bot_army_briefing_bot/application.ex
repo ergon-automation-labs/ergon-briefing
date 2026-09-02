@@ -30,30 +30,26 @@ defmodule BotArmyBriefingBot.Application do
   end
 
   defp maybe_add_repo(children) do
-    if @env == :test do
-      children
-    else
-      [{BotArmyBriefingBot.Repo, []} | children]
-    end
+    if is_test?(), do: children, else: [{BotArmyBriefingBot.Repo, []} | children]
   end
 
   defp maybe_add_pulse_publisher(children) do
-    if @env == :test do
-      children
-    else
-      [{BotArmyBriefingBot.PulsePublisher, []} | children]
-    end
+    if is_test?(), do: children, else: [{BotArmyBriefingBot.PulsePublisher, []} | children]
   end
 
   defp maybe_add_workers(children) do
-    if @env == :test do
-      children
-    else
-      [
+    if is_test?(),
+      do: children,
+      else: [
         {BotArmyBriefingBot.BriefingOrchestrator, []},
         {BotArmyBriefingBot.NATS.Consumer, []}
         | children
       ]
-    end
+  end
+
+  defp is_test?() do
+    # Using Application.get_env to satisfy Dialyzer exact_eq check
+    # while maintaining the environment gate pattern.
+    Application.get_env(:bot_army_briefing_bot, :env) == :test
   end
 end
