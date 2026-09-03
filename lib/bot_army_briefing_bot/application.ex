@@ -12,8 +12,6 @@ defmodule BotArmyBriefingBot.Application do
 
   use Application
 
-  @env Mix.env()
-
   @impl true
   def start(_type, _args) do
     # Note: BotArmyLibraryRuntime.Telemetry and BotArmyLibraryRuntime.NATS.Connection are started
