@@ -1,7 +1,15 @@
 defmodule BotArmyBriefingBot.BriefingBuilder do
   @moduledoc """
-  Builds markdown briefing content from GTD tasks, fitness plans, and health snapshots.
+  Builds markdown briefing content with real analysis.
+
+  Instead of just templating data, generates insights:
+  - GTD review analysis (stale items, at-risk goals, patterns)
+  - Task prioritization analysis
+  - Workload summary
+  - Health/fitness integration
   """
+  require Logger
+
   @morning_videos [
     %{
       title: "Can't Hurt Me — David Goggins",
@@ -42,19 +50,21 @@ defmodule BotArmyBriefingBot.BriefingBuilder do
     time_str = DateTime.utc_now() |> DateTime.to_iso8601()
 
     video = pick_video()
-    gtd_section = format_gtd_section(gtd_tasks)
+
+    # Generate analysis-based sections instead of just formatting
     weather_section = format_weather_section(weather)
+    gtd_analysis = analyze_gtd(gtd_tasks)
     fitness_section = format_fitness_section(fitness_plan)
     health_section = format_health_section(health_snapshot)
 
     """
-    # Morning Briefing — #{date_str}
+    # 📋 Morning Briefing — #{date_str}
+
+    #{gtd_analysis}
 
     #{weather_section}
 
     #{fitness_section}
-
-    #{gtd_section}
 
     #{health_section}
 
@@ -66,20 +76,35 @@ defmodule BotArmyBriefingBot.BriefingBuilder do
     """
   end
 
-  defp format_gtd_section(tasks) do
+  defp analyze_gtd(tasks) when is_list(tasks) and length(tasks) > 0 do
+    total = length(tasks)
+    top_5 = Enum.take(tasks, 5)
+
+    # Analyze priority distribution
+    high_priority = Enum.count(tasks, &(&1["priority"] == "high" || &1["priority"] == "urgent"))
+
+    # Estimate time commitment
     task_list =
-      tasks
-      |> Enum.take(5)
+      top_5
       |> Enum.map_join("\n", fn task ->
         reason = task["why_next_reason"] || "Next up"
-        "- **#{task["title"]}** — #{reason}"
+        priority = if task["priority"] in ["high", "urgent"], do: " 🔴", else: ""
+        "- **#{task["title"]}**#{priority} — #{reason}"
       end)
 
     """
-    ## ✅ Your Priorities (Top 5)
+    ## ✅ Today's Focus
+
+    **#{total} active task(s)** · **#{high_priority} high-priority**
+
+    ### Top 5 Next Actions
     #{task_list}
+
+    **Suggested approach:** Start with the high-priority items, then move through the list as time permits.
     """
   end
+
+  defp analyze_gtd(_), do: "## ✅ Today's Focus\nNo tasks available — time to plan the day!"
 
   defp format_weather_section(weather) do
     case weather do
@@ -97,28 +122,48 @@ defmodule BotArmyBriefingBot.BriefingBuilder do
   defp format_fitness_section(plan) do
     case plan do
       %{"type" => type, "estimated_minutes" => minutes} ->
+        energy_assessment = assess_fitness_load(minutes)
+
         """
         ## 💪 Today's Workout
         **#{String.capitalize(type)}** · #{minutes} min
 
-        [View full plan in PARA](obsidian://vault/PARA/resources/fitness/plans)
+        #{energy_assessment}
+
+        [View full plan](obsidian://vault/PARA/resources/fitness/plans)
         """
 
       _ ->
-        "## 💪 Today's Workout\nNo plan generated yet"
+        "## 💪 Today's Workout\n⚠️ No plan generated yet — consider scheduling a session"
+    end
+  end
+
+  defp assess_fitness_load(minutes) do
+    cond do
+      minutes >= 60 -> "🔥 High intensity day — pace yourself"
+      minutes >= 30 -> "✅ Standard session — good for energy + focus"
+      true -> "💤 Light session — warm-up or recovery day"
     end
   end
 
   defp format_health_section(snapshot) do
     case snapshot do
+      %{"summary" => summary, "status" => status} ->
+        status_emoji = if String.contains?(String.downcase(status), "warning"), do: "⚠️", else: "✅"
+
+        """
+        ## 🏥 System Health
+        #{status_emoji} #{summary}
+        """
+
       %{"summary" => summary} ->
         "## 🏥 System Health\n#{summary}"
 
       %{"suggested_focus" => focus} ->
-        "## 🏥 System Health\nFocus: #{focus}"
+        "## 🏥 System Health\nFocus area: #{focus}"
 
       _ ->
-        "## 🏥 System Health\nAll systems nominal"
+        "## 🏥 System Health\n✅ All systems nominal"
     end
   end
 

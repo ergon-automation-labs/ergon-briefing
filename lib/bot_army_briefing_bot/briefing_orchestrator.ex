@@ -1,14 +1,17 @@
 defmodule BotArmyBriefingBot.BriefingOrchestrator do
   @moduledoc """
   Orchestrates daily briefing generation and publication.
+
+  Fetches data from multiple sources concurrently with a global timeout.
+  If any source fails/times out, the briefing is still generated with
+  available data. Logs all failures for debugging.
   """
   use GenServer
   require Logger
 
-  @gtd_timeout_ms 5_000
-  @health_timeout_ms 5_000
-  @weather_timeout_ms 5_000
-  @fitness_timeout_ms 5_000
+  # Global timeout for all data fetches combined. Short NATS timeouts
+  # (100ms each) prevent blocking on unresponsive sources.
+  @global_fetch_timeout_ms 3_000
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -39,19 +42,61 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
   end
 
   defp generate_briefing do
-    Logger.info("[BriefingOrchestrator] Generating briefing")
+    Logger.info("[BriefingOrchestrator] Generating briefing (concurrent fetch)")
 
-    gtd_tasks = fetch_gtd_tasks()
-    fitness_plan = fetch_fitness_plan()
-    health_snapshot = fetch_health_snapshot()
-    weather = fetch_weather()
+    # Fetch all data sources concurrently with a global timeout.
+    # If any source fails/times out, we continue with what we got.
+    sources = [
+      {:gtd_tasks, &fetch_gtd_tasks/0},
+      {:fitness_plan, &fetch_fitness_plan/0},
+      {:health_snapshot, &fetch_health_snapshot/0},
+      {:weather, &fetch_weather/0}
+    ]
+
+    start_time = System.monotonic_time(:millisecond)
+
+    results =
+      sources
+      |> Task.async_stream(
+        fn {key, fetch_fn} ->
+          case catch_timeout(fetch_fn, @global_fetch_timeout_ms) do
+            {:ok, data} ->
+              {key, data}
+
+            {:timeout, _} ->
+              Logger.warning(
+                "[BriefingOrchestrator] Fetch #{key} timed out (#{@global_fetch_timeout_ms}ms)"
+              )
+
+              {key, nil}
+
+            {:error, reason} ->
+              Logger.warning("[BriefingOrchestrator] Fetch #{key} failed: #{inspect(reason)}")
+              {key, nil}
+          end
+        end,
+        timeout: @global_fetch_timeout_ms * 2
+      )
+      |> Enum.map(fn
+        {:ok, result} ->
+          result
+
+        {:exit, reason} ->
+          Logger.error("Task crashed: #{inspect(reason)}")
+          nil
+      end)
+      |> Enum.filter(& &1)
+      |> Map.new()
+
+    elapsed = System.monotonic_time(:millisecond) - start_time
+    Logger.info("[BriefingOrchestrator] Data fetch completed in #{elapsed}ms")
 
     briefing_data = %{
       date: Date.to_string(Date.utc_today()),
-      gtd_tasks: gtd_tasks,
-      fitness_plan: fitness_plan,
-      health_snapshot: health_snapshot,
-      weather: weather
+      gtd_tasks: Map.get(results, :gtd_tasks, []),
+      fitness_plan: Map.get(results, :fitness_plan, %{}),
+      health_snapshot: Map.get(results, :health_snapshot, %{}),
+      weather: Map.get(results, :weather, %{})
     }
 
     briefing_md = BotArmyBriefingBot.BriefingBuilder.build(briefing_data)
@@ -61,6 +106,22 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
 
     Logger.info("[BriefingOrchestrator] Briefing generated")
     :ok
+  end
+
+  # Wrapper to catch timeouts from blocking operations.
+  defp catch_timeout(fetch_fn, timeout_ms) do
+    task = Task.async(fetch_fn)
+
+    try do
+      case Task.yield(task, timeout_ms) do
+        {:ok, result} -> {:ok, result}
+        nil -> {:timeout, task}
+      end
+    rescue
+      e ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, e}
+    end
   end
 
   defp schedule_next_briefing do
@@ -81,23 +142,47 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
   end
 
   defp fetch_gtd_tasks do
-    case BotArmyLibraryRuntime.NATS.Publisher.request("gtd.whats_next", %{}, timeout_ms: @gtd_timeout_ms) do
+    case BotArmyLibraryRuntime.NATS.Publisher.request("gtd.whats_next", %{}, timeout_ms: 100) do
       {:ok, %{"data" => %{"human" => %{"tasks" => tasks}}}} ->
         tasks
 
-      _ ->
+      {:ok, response} ->
+        Logger.debug("[BriefingOrchestrator] Unexpected GTD response: #{inspect(response)}")
+        []
+
+      {:error, :timeout} ->
+        Logger.warning(
+          "[BriefingOrchestrator] GTD timeout (check if gtd.whats_next responder is running)"
+        )
+
+        []
+
+      {:error, reason} ->
+        Logger.warning("[BriefingOrchestrator] GTD failed: #{inspect(reason)}")
         []
     end
   end
 
   defp fetch_fitness_plan do
     case BotArmyLibraryRuntime.NATS.Publisher.request("fitness.workout.today", %{},
-           timeout_ms: @fitness_timeout_ms
+           timeout_ms: 100
          ) do
       {:ok, %{"data" => plan}} ->
         plan
 
-      _ ->
+      {:ok, response} ->
+        Logger.debug("[BriefingOrchestrator] Unexpected fitness response: #{inspect(response)}")
+        %{}
+
+      {:error, :timeout} ->
+        Logger.warning(
+          "[BriefingOrchestrator] Fitness timeout (check if fitness.workout.today responder is running)"
+        )
+
+        %{}
+
+      {:error, reason} ->
+        Logger.warning("[BriefingOrchestrator] Fitness failed: #{inspect(reason)}")
         %{}
     end
   end
@@ -109,24 +194,42 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
     case BotArmyLibraryRuntime.NATS.Publisher.request(
            "dispatcher.system.health.digest.query",
            %{"tenant_id" => tenant_id, "user_id" => user_id},
-           timeout_ms: @health_timeout_ms
+           timeout_ms: 100
          ) do
       {:ok, response} ->
         Map.get(response, "data", response)
 
-      _ ->
+      {:error, :timeout} ->
+        Logger.warning(
+          "[BriefingOrchestrator] Health timeout (check if dispatcher.system.health.digest.query responder is running)"
+        )
+
+        %{}
+
+      {:error, reason} ->
+        Logger.warning("[BriefingOrchestrator] Health failed: #{inspect(reason)}")
         %{}
     end
   end
 
   defp fetch_weather do
-    case BotArmyLibraryRuntime.NATS.Publisher.request("weather.current.get", %{},
-           timeout_ms: @weather_timeout_ms
-         ) do
+    case BotArmyLibraryRuntime.NATS.Publisher.request("weather.current.get", %{}, timeout_ms: 100) do
       {:ok, %{"data" => weather}} ->
         weather
 
-      _ ->
+      {:ok, response} ->
+        Logger.debug("[BriefingOrchestrator] Unexpected weather response: #{inspect(response)}")
+        %{}
+
+      {:error, :timeout} ->
+        Logger.warning(
+          "[BriefingOrchestrator] Weather timeout (check if weather.current.get responder is running)"
+        )
+
+        %{}
+
+      {:error, reason} ->
+        Logger.warning("[BriefingOrchestrator] Weather failed: #{inspect(reason)}")
         %{}
     end
   end
@@ -157,7 +260,7 @@ defmodule BotArmyBriefingBot.BriefingOrchestrator do
       "payload" => %{
         "bot_name" => "briefing",
         "channel" => "general",
-        "content" => "☀️ Your briefing is ready! Check Obsidian on your phone or open the TUI.",
+        "content" => "☀️ Your briefing is ready! Check PARA or open the TUI.",
         "username" => "Daily Briefing"
       }
     }
