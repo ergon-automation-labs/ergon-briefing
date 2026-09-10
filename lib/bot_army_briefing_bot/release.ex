@@ -6,7 +6,7 @@ defmodule BotArmyBriefingBot.Release do
   @app :bot_army_briefing_bot
 
   @doc """
-  Runs database migrations using the shared BotArmyRuntime.Ecto.MigrationRunner.
+  Runs database migrations using the shared BotArmyLibraryRuntime.Ecto.MigrationRunner.
   """
   def migrate do
     BotArmyLibraryRuntime.Ecto.MigrationRunner.run(
